@@ -1,0 +1,5 @@
+# Local env / editor / build artifacts
+.env
+.env.local
+*.log
+tmp/
