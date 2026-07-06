@@ -1,5 +1,8 @@
 # dbswitch
 
+[![Go Reference](https://pkg.go.dev/badge/github.com/anukool23/dbswitch.svg)](https://pkg.go.dev/github.com/anukool23/dbswitch)
+[![Docs](https://img.shields.io/badge/docs-forge.anukool.me-blue)](https://forge.anukool.me/dbswitch/)
+
 A small, explicit, dependency-light data-access library for Go. You describe
 tables and run CRUD in plain Go — `dbswitch` builds the right SQL for the
 configured database. No struct-tag reflection, no query DSL magic: the
@@ -7,6 +10,11 @@ generated SQL is transparent and always parameterized.
 
 **v0.1.0 supports PostgreSQL.** MySQL and MongoDB backends are planned (see
 [Roadmap](#roadmap)).
+
+## Documentation
+
+- API reference: <https://pkg.go.dev/github.com/anukool23/dbswitch>
+- Full guides: <https://forge.anukool.me/dbswitch/>
 
 ## Install
 
@@ -119,4 +127,4 @@ meant to hide SQL you actually need.
 
 ## License
 
-MIT
+[MIT](LICENSE)
