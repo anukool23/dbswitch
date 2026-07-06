@@ -14,6 +14,8 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+var _ dbswitch.Store = (*DB)(nil)
+
 // DB is a Postgres-backed data store. It owns a connection pool and the
 // Postgres dialect, and its methods run the generic query builders against
 // the real database.
