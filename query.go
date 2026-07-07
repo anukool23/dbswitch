@@ -3,6 +3,7 @@ package dbswitch
 import (
 	"errors"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -141,4 +142,55 @@ func BuildDelete(d Dialect, table string, where map[string]any) (string, []any, 
 	}
 	clause, args := buildWhere(d, where, 1)
 	return "DELETE FROM " + d.QuoteIdentifier(table) + clause, args, nil
+}
+
+// BuildList renders a SELECT with optional equality filters, a cursor range
+// condition, ORDER BY, and LIMIT — from ListOptions.
+func BuildList(d Dialect, table string, opts ListOptions) (string, []any) {
+	var b strings.Builder
+	b.WriteString("SELECT * FROM ")
+	b.WriteString(d.QuoteIdentifier(table))
+
+	conds := make([]string, 0)
+	args := make([]any, 0)
+	n := 1
+
+	for _, k := range sortedKeys(opts.Filter) {
+		conds = append(conds, d.QuoteIdentifier(k)+" = "+d.Placeholder(n))
+		args = append(args, opts.Filter[k])
+		n++
+	}
+
+	// Cursor: SortBy < After (desc) or SortBy > After (asc).
+	if opts.After != nil && opts.SortBy != "" {
+		op := ">"
+		if opts.SortDir == Descending {
+			op = "<"
+		}
+		conds = append(conds, d.QuoteIdentifier(opts.SortBy)+" "+op+" "+d.Placeholder(n))
+		args = append(args, opts.After)
+		n++
+	}
+
+	if len(conds) > 0 {
+		b.WriteString(" WHERE ")
+		b.WriteString(strings.Join(conds, " AND "))
+	}
+
+	if opts.SortBy != "" {
+		b.WriteString(" ORDER BY ")
+		b.WriteString(d.QuoteIdentifier(opts.SortBy))
+		if opts.SortDir == Descending {
+			b.WriteString(" DESC")
+		} else {
+			b.WriteString(" ASC")
+		}
+	}
+
+	if opts.Limit > 0 {
+		b.WriteString(" LIMIT ")
+		b.WriteString(strconv.Itoa(opts.Limit))
+	}
+
+	return b.String(), args
 }

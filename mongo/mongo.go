@@ -201,3 +201,53 @@ func (s *Store) Delete(ctx context.Context, table string, where map[string]any) 
 	}
 	return res.DeletedCount, nil
 }
+
+// List returns documents matching opts, translated to the driver's native
+// sort/limit options plus a $lt/$gt cursor filter.
+func (s *Store) List(ctx context.Context, table string, opts dbswitch.ListOptions) ([]map[string]any, error) {
+	filter := toMongoDoc(opts.Filter) // equality conditions, id -> _id
+
+	// Cursor: SortBy < After (desc) or SortBy > After (asc).
+	if opts.After != nil && opts.SortBy != "" {
+		op := "$gt"
+		if opts.SortDir == dbswitch.Descending {
+			op = "$lt"
+		}
+		filter[mongoField(opts.SortBy)] = bson.M{op: opts.After}
+	}
+
+	findOpts := options.Find()
+	if opts.SortBy != "" {
+		dir := 1
+		if opts.SortDir == dbswitch.Descending {
+			dir = -1
+		}
+		findOpts.SetSort(bson.D{{Key: mongoField(opts.SortBy), Value: dir}})
+	}
+	if opts.Limit > 0 {
+		findOpts.SetLimit(int64(opts.Limit))
+	}
+
+	cursor, err := s.db.Collection(table).Find(ctx, filter, findOpts)
+	if err != nil {
+		return nil, err
+	}
+
+	var docs []bson.M
+	if err := cursor.All(ctx, &docs); err != nil {
+		return nil, err
+	}
+	results := make([]map[string]any, len(docs))
+	for i, d := range docs {
+		results[i] = fromMongoDoc(d)
+	}
+	return results, nil
+}
+
+// mongoField maps the generic "id" field to Mongo's "_id" for sort/cursor use.
+func mongoField(name string) string {
+	if name == "id" {
+		return "_id"
+	}
+	return name
+}

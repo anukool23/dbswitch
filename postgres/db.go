@@ -138,3 +138,15 @@ func (db *DB) Delete(ctx context.Context, table string, where map[string]any) (i
 	}
 	return tag.RowsAffected(), nil
 }
+
+// List returns rows matching opts (equality filters + optional cursor),
+// ordered and limited. Empty result is an empty slice, not an error.
+func (db *DB) List(ctx context.Context, table string, opts dbswitch.ListOptions) ([]map[string]any, error) {
+	sql, args := dbswitch.BuildList(db.dialect, table, opts)
+
+	rows, err := db.pool.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, mapError(err)
+	}
+	return pgx.CollectRows(rows, pgx.RowToMap)
+}

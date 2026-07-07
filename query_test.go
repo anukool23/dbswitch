@@ -81,3 +81,31 @@ func TestBuildUpdate_and_Delete_refuseEmptyWhere(t *testing.T) {
 		t.Error("BuildDelete: expected error for empty where, got nil")
 	}
 }
+
+func TestBuildList(t *testing.T) {
+	sql, args := BuildList(fakeDialect{}, "posts", ListOptions{
+		Filter:  map[string]any{"status": "PUBLISHED"},
+		SortBy:  "publishedAt",
+		SortDir: Descending,
+		Limit:   20,
+		After:   "2026-07-01",
+	})
+
+	want := `SELECT * FROM "posts" WHERE "status" = $1 AND "publishedAt" < $2 ORDER BY "publishedAt" DESC LIMIT 20`
+	if sql != want {
+		t.Errorf("sql\n got: %q\nwant: %q", sql, want)
+	}
+	if !reflect.DeepEqual(args, []any{"PUBLISHED", "2026-07-01"}) {
+		t.Errorf("args = %v", args)
+	}
+}
+
+func TestBuildList_empty(t *testing.T) {
+	sql, args := BuildList(fakeDialect{}, "posts", ListOptions{})
+	if want := `SELECT * FROM "posts"`; sql != want {
+		t.Errorf("sql = %q, want %q", sql, want)
+	}
+	if len(args) != 0 {
+		t.Errorf("expected no args, got %v", args)
+	}
+}
