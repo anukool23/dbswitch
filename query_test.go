@@ -109,3 +109,35 @@ func TestBuildList_empty(t *testing.T) {
 		t.Errorf("expected no args, got %v", args)
 	}
 }
+func TestBuildList_offset(t *testing.T) {
+	sql, _ := BuildList(fakeDialect{}, "notifications", ListOptions{
+		Filter: map[string]any{"userId": "u1"},
+		SortBy: "createdAt", SortDir: Descending,
+		Limit: 20, Offset: 40, // page 3
+	})
+	want := `SELECT * FROM "notifications" WHERE "userId" = $1 ORDER BY "createdAt" DESC LIMIT 20 OFFSET 40`
+	if sql != want {
+		t.Errorf("sql\n got: %q\nwant: %q", sql, want)
+	}
+}
+
+func TestBuildCount(t *testing.T) {
+	sql, args := BuildCount(fakeDialect{}, "notifications", map[string]any{"userId": "u1", "read": false})
+	want := `SELECT COUNT(*) FROM "notifications" WHERE "read" = $1 AND "userId" = $2`
+	if sql != want {
+		t.Errorf("sql\n got: %q\nwant: %q", sql, want)
+	}
+	if len(args) != 2 {
+		t.Errorf("args = %v, want 2", args)
+	}
+}
+
+func TestBuildCount_noFilter(t *testing.T) {
+	sql, args := BuildCount(fakeDialect{}, "notifications", nil)
+	if want := `SELECT COUNT(*) FROM "notifications"`; sql != want {
+		t.Errorf("sql = %q, want %q", sql, want)
+	}
+	if len(args) != 0 {
+		t.Errorf("expected no args, got %v", args)
+	}
+}

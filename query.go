@@ -191,6 +191,23 @@ func BuildList(d Dialect, table string, opts ListOptions) (string, []any) {
 		b.WriteString(" LIMIT ")
 		b.WriteString(strconv.Itoa(opts.Limit))
 	}
+	if opts.Offset > 0 {
+		b.WriteString(" OFFSET ")
+		b.WriteString(strconv.Itoa(opts.Offset))
+	}
+
+	return b.String(), args
+}
+
+// BuildCount renders SELECT COUNT(*) with the same equality filters as
+// BuildList — no sort/limit/offset, since a count covers the whole filtered set.
+func BuildCount(d Dialect, table string, filter map[string]any) (string, []any) {
+	var b strings.Builder
+	b.WriteString("SELECT COUNT(*) FROM ")
+	b.WriteString(d.QuoteIdentifier(table))
+
+	clause, args := buildWhere(d, filter, 1)
+	b.WriteString(clause)
 
 	return b.String(), args
 }

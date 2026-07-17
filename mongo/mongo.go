@@ -227,6 +227,9 @@ func (s *Store) List(ctx context.Context, table string, opts dbswitch.ListOption
 	if opts.Limit > 0 {
 		findOpts.SetLimit(int64(opts.Limit))
 	}
+	if opts.Offset > 0 {
+		findOpts.SetSkip(int64(opts.Offset))
+	}
 
 	cursor, err := s.db.Collection(table).Find(ctx, filter, findOpts)
 	if err != nil {
@@ -250,4 +253,8 @@ func mongoField(name string) string {
 		return "_id"
 	}
 	return name
+}
+// Count returns how many documents match the filter.
+func (s *Store) Count(ctx context.Context, table string, filter map[string]any) (int64, error) {
+	return s.db.Collection(table).CountDocuments(ctx, toMongoDoc(filter))
 }

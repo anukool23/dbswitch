@@ -150,3 +150,13 @@ func (db *DB) List(ctx context.Context, table string, opts dbswitch.ListOptions)
 	}
 	return pgx.CollectRows(rows, pgx.RowToMap)
 }
+// Count returns how many rows match the filter (SELECT COUNT(*)).
+func (db *DB) Count(ctx context.Context, table string, filter map[string]any) (int64, error) {
+	sql, args := dbswitch.BuildCount(db.dialect, table, filter)
+
+	var n int64
+	if err := db.pool.QueryRow(ctx, sql, args...).Scan(&n); err != nil {
+		return 0, mapError(err)
+	}
+	return n, nil
+}

@@ -21,6 +21,12 @@ type ListOptions struct {
 	// Limit caps the number of returned rows. 0 means no limit.
 	Limit int
 
+	// Offset skips N rows before returning results — for page-based pagination
+	// (page N = Offset of (N-1)*Limit). 0 means no skip. Prefer After (cursor)
+	// for large or deeply-paged sets: Offset makes the database walk and discard
+	// every skipped row, so it gets slower the deeper you page.
+	Offset int
+
 	// After enables cursor pagination: when set together with SortBy, only rows
 	// *past* this value in the sort direction are returned — SortBy < After for
 	// Descending, SortBy > After for Ascending. Pass the SortBy value of the
