@@ -8,9 +8,9 @@ tables and run CRUD in plain Go — `dbswitch` talks to the configured database
 for you. No struct-tag reflection, no query DSL magic: for SQL backends the
 generated SQL is transparent and always parameterized.
 
-**v0.2.0 supports PostgreSQL and MongoDB.** Both back a common
-[`dbswitch.Store`](#backends) interface, so the same CRUD code runs against
-either. MySQL is planned (see [Roadmap](#roadmap)).
+**v0.4.0 supports PostgreSQL, MongoDB, and DynamoDB.** All three back a
+common [`dbswitch.Store`](#backends) interface, so the same CRUD code runs
+against any of them. MySQL is planned (see [Roadmap](#roadmap)).
 
 ## Documentation
 
@@ -29,6 +29,7 @@ lives in its own sub-package, so you only pull in a driver you actually use:
 ```bash
 go get github.com/anukool23/dbswitch/postgres  # pulls in jackc/pgx
 go get github.com/anukool23/dbswitch/mongo     # pulls in the official mongo driver
+go get github.com/anukool23/dbswitch/dynamodb  # pulls in aws-sdk-go-v2
 ```
 
 ## Quick start
@@ -37,6 +38,7 @@ go get github.com/anukool23/dbswitch/mongo     # pulls in the official mongo dri
 ctx := context.Background()
 
 // PostgreSQL. For MongoDB: mongo.Open(ctx, os.Getenv("MONGO_URI"), "myapp")
+// For DynamoDB: dynamodb.Open(ctx)
 db, err := postgres.Open(ctx, os.Getenv("DATABASE_URL"))
 if err != nil {
 	log.Fatal(err)
@@ -87,8 +89,8 @@ type Store interface {
 }
 ```
 
-Both `*postgres.DB` and `*mongo.Store` satisfy it (asserted at compile time), so
-you can write backend-agnostic code:
+`*postgres.DB`, `*mongo.Store`, and `*dynamodb.Store` all satisfy it (asserted
+at compile time), so you can write backend-agnostic code:
 
 ```go
 func seed(ctx context.Context, db dbswitch.Store) error {
@@ -129,6 +131,44 @@ Mongo is schemaless, so the abstractions map like this:
 Column **types** and **defaults** are SQL concepts — the Mongo backend ignores
 them. Only `Unique` (→ unique index) and the primary key (→ `_id`) have an effect.
 
+### DynamoDB
+
+```go
+db, err := dynamodb.Open(ctx) // uses the default AWS config chain (env vars, IAM role, etc.)
+```
+
+For DynamoDB Local or any custom endpoint, pass a client option:
+
+```go
+db, err := dynamodb.Open(ctx, func(o *awsdynamodb.Options) {
+	o.BaseEndpoint = aws.String("http://localhost:8000")
+})
+```
+
+DynamoDB is schemaless like Mongo, but has no query planner or secondary
+index by default, which changes the abstractions more than Mongo does:
+
+| dbswitch concept        | DynamoDB                                                                 |
+|--------------------------|--------------------------------------------------------------------------|
+| Table                    | Table (billed `PAY_PER_REQUEST`, no throughput to tune)                 |
+| `PrimaryKey` column      | Must be named `"id"` — becomes the table's partition key                |
+| `CreateTable`            | Real `CreateTable` DDL (unlike Mongo's implicit collections); idempotent |
+| `Unique` on `"id"`       | Enforced via a conditional `PutItem`                                    |
+| `Unique` on other columns| **Not supported** — `CreateTable` returns an error instead of ignoring it |
+| `FindOne`/`Find`/`List`/`Count` by `{"id": v}` | Direct `GetItem`/`Query` — cheap                  |
+| Same, by any other field | Full-table `Scan` + `FilterExpression` — correct, not free at scale     |
+| `Update`/`Delete` by `{"id": v}` | Direct `UpdateItem`/`DeleteItem`                                 |
+| Same, by any other field | `Scan` for matches, then one call per match                             |
+| `ListOptions.SortBy`/`After` | Emulated **in memory** after a Scan — no sort key/GSI support yet   |
+| Duplicate key             | `*dbswitch.DuplicateError`; `Constraint` is `"<table>.id"`              |
+| Not found                 | `dbswitch.ErrNotFound`                                                  |
+
+Composite (partition + sort key) tables aren't supported yet — only a single
+`"id"` partition key. For filters or sorting on hot paths, add a Global
+Secondary Index and query it with the AWS SDK directly; `dbswitch`'s
+Scan-based fallback is meant for convenience and small-to-medium tables, not
+as a replacement for indexed access patterns.
+
 ## Errors
 
 All backends translate native driver errors into the same shared values, so
@@ -144,7 +184,8 @@ err = db.Insert(ctx, "users", map[string]any{"email": "a@b.com"})
 if errors.Is(err, dbswitch.ErrDuplicate) {
 	var dup *dbswitch.DuplicateError
 	if errors.As(err, &dup) {
-		// dup.Constraint == "users_email_key" (Postgres) or "email_1" (Mongo)
+		// dup.Constraint == "users_email_key" (Postgres), "email_1" (Mongo),
+		// or "users.id" (DynamoDB — only the primary key can be duplicate-checked)
 	}
 }
 ```
@@ -177,20 +218,37 @@ Defaults: `DefaultGenerateUUID` → `gen_random_uuid()`,
 - **`CreateTable` is not migrations.** No schema versioning, alters, or
   indexes-beyond-column-constraints. Use a real migration tool for evolving
   schemas.
-- **No transactions API** in v0.2.0.
+- **No transactions API.**
+- **DynamoDB filters on non-`"id"` fields cost a full-table Scan.** There's
+  no secondary index by default, so `Find`/`List`/`Count`/`Update`/`Delete`
+  with a non-key condition walk the whole table. Fine for small tables and
+  convenience use; add a GSI and query it directly for anything at scale.
+- **DynamoDB only supports a single `"id"` partition key** — no composite
+  (partition + sort) keys, and `Unique` is only enforceable on that key.
 
 For anything beyond this surface, use your driver directly — `dbswitch` is not
 meant to hide SQL you actually need.
 
 ## Roadmap
 
-Shipped in v0.2.0: the `Store` interface and the MongoDB backend. Still planned:
+Shipped in v0.4.0: the DynamoDB backend. Still planned:
 
 - MySQL backend (`dbswitch/mysql`)
+- Composite (partition + sort key) support for DynamoDB
 - Richer conditions (operators, `OR`, `IN`)
 - Transactions API
 
 ## Changelog
+
+### v0.4.0
+
+- **DynamoDB backend** (`dbswitch/dynamodb`) built on AWS SDK v2. Direct
+  `GetItem`/`UpdateItem`/`DeleteItem` for primary-key access; Scan +
+  `FilterExpression` fallback for arbitrary equality conditions; in-memory
+  sort/cursor/offset emulation for `List`.
+- Same shared errors (`ErrNotFound` / `ErrDuplicate`) across all three
+  backends.
+- Runnable demo added under `cmd/demo/dynamodb`.
 
 ### v0.2.0
 
