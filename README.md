@@ -8,7 +8,7 @@ tables and run CRUD in plain Go — `dbswitch` talks to the configured database
 for you. No struct-tag reflection, no query DSL magic: for SQL backends the
 generated SQL is transparent and always parameterized.
 
-**v0.4.0 supports PostgreSQL, MongoDB, and DynamoDB.** All three back a
+**v0.5.0 supports PostgreSQL, MongoDB, and DynamoDB.** All three back a
 common [`dbswitch.Store`](#backends) interface, so the same CRUD code runs
 against any of them. MySQL is planned (see [Roadmap](#roadmap)).
 
@@ -231,7 +231,7 @@ meant to hide SQL you actually need.
 
 ## Roadmap
 
-Shipped in v0.4.0: the DynamoDB backend. Still planned:
+Shipped in v0.5.0: the DynamoDB backend. Still planned:
 
 - MySQL backend (`dbswitch/mysql`)
 - Composite (partition + sort key) support for DynamoDB
@@ -240,7 +240,7 @@ Shipped in v0.4.0: the DynamoDB backend. Still planned:
 
 ## Changelog
 
-### v0.4.0
+### v0.5.0
 
 - **DynamoDB backend** (`dbswitch/dynamodb`) built on AWS SDK v2. Direct
   `GetItem`/`UpdateItem`/`DeleteItem` for primary-key access; Scan +
