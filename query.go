@@ -199,6 +199,42 @@ func BuildList(d Dialect, table string, opts ListOptions) (string, []any) {
 	return b.String(), args
 }
 
+// BuildUpsert renders an INSERT … ON CONFLICT ("id") DO UPDATE SET … for SQL
+// backends that support it (PostgreSQL, SQLite). Every column except "id" is
+// included in the DO UPDATE SET clause; "id" itself is never overwritten.
+// The non-SQL backends (Mongo, DynamoDB) implement Upsert natively and do not
+// call this builder.
+func BuildUpsert(d Dialect, table string, data map[string]any) (string, []any) {
+	cols := sortedKeys(data)
+
+	quotedCols := make([]string, len(cols))
+	placeholders := make([]string, len(cols))
+	args := make([]any, len(cols))
+	for i, c := range cols {
+		quotedCols[i] = d.QuoteIdentifier(c)
+		placeholders[i] = d.Placeholder(i + 1)
+		args[i] = data[c]
+	}
+
+	// DO UPDATE SET: all columns except "id" (we never overwrite the primary key)
+	setClauses := make([]string, 0, len(cols))
+	for _, c := range cols {
+		if c == "id" {
+			continue
+		}
+		qc := d.QuoteIdentifier(c)
+		setClauses = append(setClauses, qc+" = EXCLUDED."+qc)
+	}
+
+	sql := "INSERT INTO " + d.QuoteIdentifier(table) +
+		" (" + strings.Join(quotedCols, ", ") + ")" +
+		" VALUES (" + strings.Join(placeholders, ", ") + ")" +
+		" ON CONFLICT (" + d.QuoteIdentifier("id") + ") DO UPDATE SET " +
+		strings.Join(setClauses, ", ")
+
+	return sql, args
+}
+
 // BuildCount renders SELECT COUNT(*) with the same equality filters as
 // BuildList — no sort/limit/offset, since a count covers the whole filtered set.
 func BuildCount(d Dialect, table string, filter map[string]any) (string, []any) {

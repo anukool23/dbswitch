@@ -8,7 +8,7 @@ tables and run CRUD in plain Go — `dbswitch` talks to the configured database
 for you. No struct-tag reflection, no query DSL magic: for SQL backends the
 generated SQL is transparent and always parameterized.
 
-**v0.5.0 supports PostgreSQL, MongoDB, and DynamoDB.** All three back a
+**v0.6.0 supports PostgreSQL, MongoDB, and DynamoDB.** All three back a
 common [`dbswitch.Store`](#backends) interface, so the same CRUD code runs
 against any of them. MySQL is planned (see [Roadmap](#roadmap)).
 
@@ -81,10 +81,14 @@ CRUD code runs against PostgreSQL or MongoDB:
 type Store interface {
 	CreateTable(ctx context.Context, t Table) error
 	Insert(ctx context.Context, table string, data map[string]any) error
+	Upsert(ctx context.Context, table string, data map[string]any) error
 	FindOne(ctx context.Context, table string, where map[string]any) (map[string]any, error)
 	Find(ctx context.Context, table string, where map[string]any) ([]map[string]any, error)
+	List(ctx context.Context, table string, opts ListOptions) ([]map[string]any, error)
+	Count(ctx context.Context, table string, filter map[string]any) (int64, error)
 	Update(ctx context.Context, table string, set, where map[string]any) (int64, error)
 	Delete(ctx context.Context, table string, where map[string]any) (int64, error)
+	TransactWrite(ctx context.Context, ops []TxOp) error
 	Close()
 }
 ```
@@ -218,7 +222,7 @@ Defaults: `DefaultGenerateUUID` → `gen_random_uuid()`,
 - **`CreateTable` is not migrations.** No schema versioning, alters, or
   indexes-beyond-column-constraints. Use a real migration tool for evolving
   schemas.
-- **No transactions API.**
+- **`TransactWrite` on MongoDB requires a replica set.** A standalone `mongod` (typical local dev) does not support multi-document transactions. Run a single-node replica set locally if you need transactional writes against Mongo.
 - **DynamoDB filters on non-`"id"` fields cost a full-table Scan.** There's
   no secondary index by default, so `Find`/`List`/`Count`/`Update`/`Delete`
   with a non-key condition walk the whole table. Fine for small tables and
@@ -231,14 +235,21 @@ meant to hide SQL you actually need.
 
 ## Roadmap
 
-Shipped in v0.5.0: the DynamoDB backend. Still planned:
+Shipped in v0.6.0: `Upsert` and `TransactWrite` across all backends. Still planned:
 
 - MySQL backend (`dbswitch/mysql`)
 - Composite (partition + sort key) support for DynamoDB
 - Richer conditions (operators, `OR`, `IN`)
-- Transactions API
 
 ## Changelog
+
+### v0.6.0
+
+- **`Upsert`**: create-or-replace across all three backends. PostgreSQL uses `INSERT … ON CONFLICT DO UPDATE`; MongoDB uses `ReplaceOne` with upsert; DynamoDB uses an unconditional `PutItem`.
+- **`TransactWrite`**: atomic multi-op writes. PostgreSQL uses a `pgx` transaction; MongoDB uses `session.WithTransaction` (replica set required); DynamoDB uses `TransactWriteItems`.
+- New `TxOp` / `TxOpType` types for building transaction op lists (`TxOpInsert`, `TxOpUpsert`, `TxOpUpdate`, `TxOpDelete`).
+- New `TransactionFailedError` error type (wraps cause; `errors.Is(err, ErrTransactionFailed)` works).
+- New `BuildUpsert` SQL query builder.
 
 ### v0.5.0
 

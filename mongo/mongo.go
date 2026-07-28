@@ -171,6 +171,80 @@ func fromMongoDoc(doc bson.M) map[string]any {
 	}
 	return out
 }
+// Upsert writes a document unconditionally: replaces it if the id exists,
+// creates it otherwise. Never returns DuplicateError.
+//
+// Note: Mongo transactions (used by TransactWrite) require a replica set or
+// sharded cluster. Against a standalone mongod (e.g. local dev), Upsert works
+// fine but TransactWrite will fail — run a single-node replica set locally if
+// you need transactional writes.
+func (s *Store) Upsert(ctx context.Context, table string, data map[string]any) error {
+	doc := toMongoDoc(data)
+	id, ok := doc["_id"]
+	if !ok {
+		return errors.New("dbswitch: upsert requires an \"id\" field")
+	}
+	opts := options.Replace().SetUpsert(true)
+	_, err := s.db.Collection(table).ReplaceOne(ctx, bson.M{"_id": id}, doc, opts)
+	return mapMongoError(err)
+}
+
+// TransactWrite executes multiple write operations inside a single Mongo
+// multi-document transaction. Requires a replica set — see the Upsert doc.
+// A DuplicateError from any inner Insert surfaces directly; any other failure
+// is wrapped in *dbswitch.TransactionFailedError.
+func (s *Store) TransactWrite(ctx context.Context, ops []dbswitch.TxOp) error {
+	session, err := s.client.StartSession()
+	if err != nil {
+		return fmt.Errorf("mongo: start session: %w", err)
+	}
+	defer session.EndSession(ctx)
+
+	_, err = session.WithTransaction(ctx, func(ctx context.Context) (any, error) {
+		for _, op := range ops {
+			if err := s.execMongoTxOp(ctx, op); err != nil {
+				return nil, err
+			}
+		}
+		return nil, nil
+	})
+	if err != nil {
+		if mongo.IsDuplicateKeyError(err) {
+			return &dbswitch.DuplicateError{Constraint: duplicateConstraint(err)}
+		}
+		return &dbswitch.TransactionFailedError{Cause: err}
+	}
+	return nil
+}
+
+func (s *Store) execMongoTxOp(ctx context.Context, op dbswitch.TxOp) error {
+	coll := s.db.Collection(op.Table)
+	switch op.Type {
+	case dbswitch.TxOpInsert:
+		_, err := coll.InsertOne(ctx, toMongoDoc(op.Data))
+		return mapMongoError(err)
+	case dbswitch.TxOpUpsert:
+		doc := toMongoDoc(op.Data)
+		id, ok := doc["_id"]
+		if !ok {
+			return errors.New("dbswitch: TxOpUpsert requires an \"id\" field in Data")
+		}
+		opts := options.Replace().SetUpsert(true)
+		_, err := coll.ReplaceOne(ctx, bson.M{"_id": id}, doc, opts)
+		return mapMongoError(err)
+	case dbswitch.TxOpUpdate:
+		filter := toMongoDoc(op.Where)
+		_, err := coll.UpdateMany(ctx, filter, bson.M{"$set": toMongoDoc(op.Set)})
+		return mapMongoError(err)
+	case dbswitch.TxOpDelete:
+		filter := toMongoDoc(op.Where)
+		_, err := coll.DeleteMany(ctx, filter)
+		return mapMongoError(err)
+	default:
+		return fmt.Errorf("dbswitch: unknown TxOpType %q", op.Type)
+	}
+}
+
 // Update sets fields on all matching documents, returning how many matched.
 // Refuses an empty where (an empty Mongo filter matches EVERY document).
 func (s *Store) Update(ctx context.Context, table string, set, where map[string]any) (int64, error) {

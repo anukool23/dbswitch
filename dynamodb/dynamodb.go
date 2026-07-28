@@ -174,6 +174,128 @@ func (s *Store) Insert(ctx context.Context, table string, data map[string]any) e
 	return nil
 }
 
+// Upsert writes an item unconditionally — creates it if absent, fully replaces
+// it if present. Unlike Insert it never returns DuplicateError.
+func (s *Store) Upsert(ctx context.Context, table string, data map[string]any) error {
+	item, err := attributevalue.MarshalMap(data)
+	if err != nil {
+		return fmt.Errorf("dynamodb: marshal item: %w", err)
+	}
+	_, err = s.client.PutItem(ctx, &dynamodb.PutItemInput{
+		TableName: aws.String(table),
+		Item:      item,
+		// No ConditionExpression — unconditional write.
+	})
+	if err != nil {
+		return fmt.Errorf("dynamodb: upsert into %q: %w", table, err)
+	}
+	return nil
+}
+
+// TransactWrite executes multiple write operations atomically via
+// TransactWriteItems. All ops succeed or all are rolled back.
+// A conditional-check failure inside a TxOpInsert surfaces as *DuplicateError;
+// any other cancellation is wrapped in *TransactionFailedError.
+func (s *Store) TransactWrite(ctx context.Context, ops []dbswitch.TxOp) error {
+	txItems := make([]types.TransactWriteItem, 0, len(ops))
+	for _, op := range ops {
+		item, err := s.buildDynamoTxItem(op)
+		if err != nil {
+			return fmt.Errorf("dynamodb: build tx op for table %q: %w", op.Table, err)
+		}
+		txItems = append(txItems, item)
+	}
+
+	_, err := s.client.TransactWriteItems(ctx, &dynamodb.TransactWriteItemsInput{
+		TransactItems: txItems,
+	})
+	if err != nil {
+		var txCancelled *types.TransactionCanceledException
+		if errors.As(err, &txCancelled) {
+			for _, r := range txCancelled.CancellationReasons {
+				if r.Code != nil && *r.Code == "ConditionalCheckFailed" {
+					return &dbswitch.DuplicateError{Constraint: "transaction.id"}
+				}
+			}
+		}
+		return &dbswitch.TransactionFailedError{Cause: err}
+	}
+	return nil
+}
+
+func (s *Store) buildDynamoTxItem(op dbswitch.TxOp) (types.TransactWriteItem, error) {
+	switch op.Type {
+	case dbswitch.TxOpInsert:
+		av, err := attributevalue.MarshalMap(op.Data)
+		if err != nil {
+			return types.TransactWriteItem{}, err
+		}
+		return types.TransactWriteItem{
+			Put: &types.Put{
+				TableName:                aws.String(op.Table),
+				Item:                     av,
+				ConditionExpression:      aws.String("attribute_not_exists(#pk)"),
+				ExpressionAttributeNames: map[string]string{"#pk": partitionKey},
+			},
+		}, nil
+
+	case dbswitch.TxOpUpsert:
+		av, err := attributevalue.MarshalMap(op.Data)
+		if err != nil {
+			return types.TransactWriteItem{}, err
+		}
+		return types.TransactWriteItem{
+			Put: &types.Put{
+				TableName: aws.String(op.Table),
+				Item:      av,
+				// No condition — unconditional replace.
+			},
+		}, nil
+
+	case dbswitch.TxOpUpdate:
+		id, ok := op.Where[partitionKey]
+		if !ok {
+			return types.TransactWriteItem{}, fmt.Errorf("TxOpUpdate: Where must contain %q", partitionKey)
+		}
+		keyAV, err := attributevalue.Marshal(id)
+		if err != nil {
+			return types.TransactWriteItem{}, err
+		}
+		expr, names, vals, err := buildUpdateExpression(op.Set)
+		if err != nil {
+			return types.TransactWriteItem{}, err
+		}
+		return types.TransactWriteItem{
+			Update: &types.Update{
+				TableName:                 aws.String(op.Table),
+				Key:                       map[string]types.AttributeValue{partitionKey: keyAV},
+				UpdateExpression:          aws.String(expr),
+				ExpressionAttributeNames:  names,
+				ExpressionAttributeValues: vals,
+			},
+		}, nil
+
+	case dbswitch.TxOpDelete:
+		id, ok := op.Where[partitionKey]
+		if !ok {
+			return types.TransactWriteItem{}, fmt.Errorf("TxOpDelete: Where must contain %q", partitionKey)
+		}
+		keyAV, err := attributevalue.Marshal(id)
+		if err != nil {
+			return types.TransactWriteItem{}, err
+		}
+		return types.TransactWriteItem{
+			Delete: &types.Delete{
+				TableName: aws.String(op.Table),
+				Key:       map[string]types.AttributeValue{partitionKey: keyAV},
+			},
+		}, nil
+
+	default:
+		return types.TransactWriteItem{}, fmt.Errorf("dbswitch: unknown TxOpType %q", op.Type)
+	}
+}
+
 // FindOne returns the first matching item. If where is exactly {"id": v}, it
 // uses a direct GetItem (cheap); otherwise it Scans with a FilterExpression,
 // stopping at the first page that contains a match. No match -> ErrNotFound,

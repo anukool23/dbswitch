@@ -132,6 +132,24 @@ func TestBuildCount(t *testing.T) {
 	}
 }
 
+func TestBuildUpsert(t *testing.T) {
+	sql, args := BuildUpsert(fakeDialect{}, "users", map[string]any{
+		"id":    "u1",
+		"email": "a@b.com",
+		"name":  "A",
+	})
+	// sorted cols: email($1), id($2), name($3)
+	wantSQL := `INSERT INTO "users" ("email", "id", "name") VALUES ($1, $2, $3)` +
+		` ON CONFLICT ("id") DO UPDATE SET "email" = EXCLUDED."email", "name" = EXCLUDED."name"`
+	if sql != wantSQL {
+		t.Errorf("sql\n got: %q\nwant: %q", sql, wantSQL)
+	}
+	wantArgs := []any{"a@b.com", "u1", "A"}
+	if !reflect.DeepEqual(args, wantArgs) {
+		t.Errorf("args = %v, want %v", args, wantArgs)
+	}
+}
+
 func TestBuildCount_noFilter(t *testing.T) {
 	sql, args := BuildCount(fakeDialect{}, "notifications", nil)
 	if want := `SELECT COUNT(*) FROM "notifications"`; sql != want {

@@ -30,6 +30,7 @@ type Dialect interface {
 // caller can use errors.Is(err, ErrDuplicate) without knowing which database
 // is underneath.
 var (
-	ErrNotFound  = errors.New("dbswitch: no rows found")
-	ErrDuplicate = errors.New("dbswitch: unique constraint violation")
+	ErrNotFound         = errors.New("dbswitch: no rows found")
+	ErrDuplicate        = errors.New("dbswitch: unique constraint violation")
+	ErrTransactionFailed = errors.New("dbswitch: transaction failed")
 )

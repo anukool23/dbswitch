@@ -5,13 +5,11 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/anukool23/dbswitch"
-
-	"github.com/jackc/pgx/v5/pgconn"
-
-	"github.com/jackc/pgx/v5"
 )
 
 var _ dbswitch.Store = (*DB)(nil)
@@ -76,6 +74,68 @@ func mapError(err error) error {
 		}
 	}
 	return err
+}
+
+// Upsert executes INSERT … ON CONFLICT ("id") DO UPDATE SET …, creating the
+// row if absent or fully replacing it if present. Never returns DuplicateError.
+func (db *DB) Upsert(ctx context.Context, table string, data map[string]any) error {
+	sql, args := dbswitch.BuildUpsert(db.dialect, table, data)
+	if _, err := db.pool.Exec(ctx, sql, args...); err != nil {
+		return mapError(err)
+	}
+	return nil
+}
+
+// TransactWrite executes multiple write operations inside a single Postgres
+// transaction. All succeed or all roll back. A DuplicateError from any inner
+// Insert is surfaced directly; any other failure is wrapped in
+// *dbswitch.TransactionFailedError (errors.Is(err, ErrTransactionFailed) == true).
+func (db *DB) TransactWrite(ctx context.Context, ops []dbswitch.TxOp) error {
+	tx, err := db.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("postgres: begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck — no-op after a successful Commit
+
+	for _, op := range ops {
+		if err := execPostgresTxOp(ctx, tx, db.dialect, op); err != nil {
+			return err // DuplicateError passes through unchanged
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return &dbswitch.TransactionFailedError{Cause: err}
+	}
+	return nil
+}
+
+func execPostgresTxOp(ctx context.Context, tx pgx.Tx, d Dialect, op dbswitch.TxOp) error {
+	switch op.Type {
+	case dbswitch.TxOpInsert:
+		sql, args := dbswitch.BuildInsert(d, op.Table, op.Data)
+		_, err := tx.Exec(ctx, sql, args...)
+		return mapError(err)
+	case dbswitch.TxOpUpsert:
+		sql, args := dbswitch.BuildUpsert(d, op.Table, op.Data)
+		_, err := tx.Exec(ctx, sql, args...)
+		return mapError(err)
+	case dbswitch.TxOpUpdate:
+		sql, args, err := dbswitch.BuildUpdate(d, op.Table, op.Set, op.Where)
+		if err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx, sql, args...)
+		return mapError(err)
+	case dbswitch.TxOpDelete:
+		sql, args, err := dbswitch.BuildDelete(d, op.Table, op.Where)
+		if err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx, sql, args...)
+		return mapError(err)
+	default:
+		return fmt.Errorf("dbswitch: unknown TxOpType %q", op.Type)
+	}
 }
 
 // FindOne returns the first row matching the conditions. If nothing matches,
