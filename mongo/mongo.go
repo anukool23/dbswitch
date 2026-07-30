@@ -332,3 +332,51 @@ func mongoField(name string) string {
 func (s *Store) Count(ctx context.Context, table string, filter map[string]any) (int64, error) {
 	return s.db.Collection(table).CountDocuments(ctx, toMongoDoc(filter))
 }
+
+// IncrementField atomically increments a numeric field by 1 using MongoDB's
+// native $inc operator — no read-before-write, safe under concurrent calls.
+// where must contain "id". Returns ErrNotFound if no document matched.
+func (s *Store) IncrementField(ctx context.Context, table, field string, where map[string]any) error {
+	if len(where) == 0 {
+		return errors.New("dbswitch: IncrementField requires a WHERE condition")
+	}
+	if _, ok := where["id"]; !ok {
+		return errors.New("dbswitch: IncrementField: where must contain \"id\"")
+	}
+	res, err := s.db.Collection(table).UpdateOne(
+		ctx,
+		toMongoDoc(where),
+		bson.M{"$inc": bson.M{field: 1}},
+	)
+	if err != nil {
+		return mapMongoError(err)
+	}
+	if res.MatchedCount == 0 {
+		return dbswitch.ErrNotFound
+	}
+	return nil
+}
+
+// DecrementField atomically decrements a numeric field by 1 using MongoDB's
+// native $inc operator — no read-before-write, safe under concurrent calls.
+// where must contain "id". Returns ErrNotFound if no document matched.
+func (s *Store) DecrementField(ctx context.Context, table, field string, where map[string]any) error {
+	if len(where) == 0 {
+		return errors.New("dbswitch: DecrementField requires a WHERE condition")
+	}
+	if _, ok := where["id"]; !ok {
+		return errors.New("dbswitch: DecrementField: where must contain \"id\"")
+	}
+	res, err := s.db.Collection(table).UpdateOne(
+		ctx,
+		toMongoDoc(where),
+		bson.M{"$inc": bson.M{field: -1}},
+	)
+	if err != nil {
+		return mapMongoError(err)
+	}
+	if res.MatchedCount == 0 {
+		return dbswitch.ErrNotFound
+	}
+	return nil
+}

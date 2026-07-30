@@ -41,5 +41,15 @@ type Store interface {
 	// or all are rolled back. A duplicate-id Insert inside the transaction
 	// returns *DuplicateError; any other failure returns ErrTransactionFailed.
 	TransactWrite(ctx context.Context, ops []TxOp) error
+	// DecrementField atomically decrements a numeric field by 1 on the row
+	// matching where (must contain "id"). The decrement is a native atomic
+	// operation on every backend — no read-before-write, no race condition.
+	// Returns ErrNotFound if the row doesn't exist.
+	DecrementField(ctx context.Context, table, field string, where map[string]any) error
+	// IncrementField atomically increments a numeric field by 1 on the row
+	// matching where (must contain "id"). The increment is a native atomic
+	// operation on every backend — no read-before-write, no race condition.
+	// Returns ErrNotFound if the row doesn't exist.
+	IncrementField(ctx context.Context, table, field string, where map[string]any) error
 	Close()
 }

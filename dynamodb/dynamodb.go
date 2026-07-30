@@ -466,6 +466,74 @@ func (s *Store) Update(ctx context.Context, table string, set, where map[string]
 	return n, nil
 }
 
+// DecrementField atomically decrements a numeric field by 1 using DynamoDB's
+// native ADD expression — no read-before-write, safe under concurrent calls.
+// where must contain "id". Returns ErrNotFound if the item doesn't exist.
+func (s *Store) DecrementField(ctx context.Context, table, field string, where map[string]any) error {
+	id, ok := where[partitionKey]
+	if !ok {
+		return fmt.Errorf("dbswitch: DecrementField: where must contain %q", partitionKey)
+	}
+	keyAV, err := attributevalue.Marshal(id)
+	if err != nil {
+		return fmt.Errorf("dynamodb: marshal id: %w", err)
+	}
+	decAV, err := attributevalue.Marshal(-1)
+	if err != nil {
+		return fmt.Errorf("dynamodb: marshal decrement value: %w", err)
+	}
+	_, err = s.client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName:                 aws.String(table),
+		Key:                       map[string]types.AttributeValue{partitionKey: keyAV},
+		UpdateExpression:          aws.String("ADD #f :dec"),
+		ConditionExpression:       aws.String("attribute_exists(#pk)"),
+		ExpressionAttributeNames:  map[string]string{"#f": field, "#pk": partitionKey},
+		ExpressionAttributeValues: map[string]types.AttributeValue{":dec": decAV},
+	})
+	if err != nil {
+		var cond *types.ConditionalCheckFailedException
+		if errors.As(err, &cond) {
+			return dbswitch.ErrNotFound
+		}
+		return fmt.Errorf("dynamodb: decrement %q.%q: %w", table, field, err)
+	}
+	return nil
+}
+
+// IncrementField atomically increments a numeric field by 1 using DynamoDB's
+// native ADD expression — no read-before-write, safe under concurrent calls.
+// where must contain "id". Returns ErrNotFound if the item doesn't exist.
+func (s *Store) IncrementField(ctx context.Context, table, field string, where map[string]any) error {
+	id, ok := where[partitionKey]
+	if !ok {
+		return fmt.Errorf("dbswitch: IncrementField: where must contain %q", partitionKey)
+	}
+	keyAV, err := attributevalue.Marshal(id)
+	if err != nil {
+		return fmt.Errorf("dynamodb: marshal id: %w", err)
+	}
+	incAV, err := attributevalue.Marshal(1)
+	if err != nil {
+		return fmt.Errorf("dynamodb: marshal increment value: %w", err)
+	}
+	_, err = s.client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName:                 aws.String(table),
+		Key:                       map[string]types.AttributeValue{partitionKey: keyAV},
+		UpdateExpression:          aws.String("ADD #f :inc"),
+		ConditionExpression:       aws.String("attribute_exists(#pk)"),
+		ExpressionAttributeNames:  map[string]string{"#f": field, "#pk": partitionKey},
+		ExpressionAttributeValues: map[string]types.AttributeValue{":inc": incAV},
+	})
+	if err != nil {
+		var cond *types.ConditionalCheckFailedException
+		if errors.As(err, &cond) {
+			return dbswitch.ErrNotFound
+		}
+		return fmt.Errorf("dynamodb: increment %q.%q: %w", table, field, err)
+	}
+	return nil
+}
+
 func (s *Store) updateByKey(ctx context.Context, table string, keyAV types.AttributeValue, updateExpr string, names map[string]string, values map[string]types.AttributeValue) (bool, error) {
 	_, err := s.client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
 		TableName:                 aws.String(table),

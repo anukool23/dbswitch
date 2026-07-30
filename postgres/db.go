@@ -210,6 +210,50 @@ func (db *DB) List(ctx context.Context, table string, opts dbswitch.ListOptions)
 	}
 	return pgx.CollectRows(rows, pgx.RowToMap)
 }
+// DecrementField atomically decrements a numeric column by 1 using a single
+// UPDATE statement — no read-before-write, safe under concurrent calls.
+// where must contain "id". Returns ErrNotFound if no row matched.
+func (db *DB) DecrementField(ctx context.Context, table, field string, where map[string]any) error {
+	if len(where) == 0 {
+		return errors.New("dbswitch: DecrementField requires a WHERE condition")
+	}
+	id, ok := where["id"]
+	if !ok {
+		return errors.New("dbswitch: DecrementField: where must contain \"id\"")
+	}
+	sql := fmt.Sprintf(`UPDATE %q SET %q = %q - 1 WHERE id = $1`, table, field, field)
+	tag, err := db.pool.Exec(ctx, sql, id)
+	if err != nil {
+		return mapError(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return dbswitch.ErrNotFound
+	}
+	return nil
+}
+
+// IncrementField atomically increments a numeric column by 1 using a single
+// UPDATE statement — no read-before-write, safe under concurrent calls.
+// where must contain "id". Returns ErrNotFound if no row matched.
+func (db *DB) IncrementField(ctx context.Context, table, field string, where map[string]any) error {
+	if len(where) == 0 {
+		return errors.New("dbswitch: IncrementField requires a WHERE condition")
+	}
+	id, ok := where["id"]
+	if !ok {
+		return errors.New("dbswitch: IncrementField: where must contain \"id\"")
+	}
+	sql := fmt.Sprintf(`UPDATE %q SET %q = %q + 1 WHERE id = $1`, table, field, field)
+	tag, err := db.pool.Exec(ctx, sql, id)
+	if err != nil {
+		return mapError(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return dbswitch.ErrNotFound
+	}
+	return nil
+}
+
 // Count returns how many rows match the filter (SELECT COUNT(*)).
 func (db *DB) Count(ctx context.Context, table string, filter map[string]any) (int64, error) {
 	sql, args := dbswitch.BuildCount(db.dialect, table, filter)
